@@ -1,0 +1,209 @@
+CREATE TABLE Clientes (
+    ClienteID SERIAL PRIMARY KEY,
+    Nome VARCHAR(100) NOT NULL,
+    Email VARCHAR(100) NOT NULL,
+    DataNascimento DATE NOT NULL,
+    Cidade VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE Produtos (
+    ProdutoID SERIAL PRIMARY KEY,
+    NomeProduto VARCHAR(100) NOT NULL,
+    Categoria VARCHAR(50) NOT NULL,
+    Preco DECIMAL(10, 2) NOT NULL,
+    Estoque INT NOT NULL
+);
+
+CREATE TABLE Pedidos (
+    PedidoID SERIAL PRIMARY KEY,
+    ClienteID INT REFERENCES Clientes(ClienteID),
+    DataPedido DATE NOT NULL,
+    ValorTotal DECIMAL(10, 2) NOT NULL
+);
+
+CREATE TABLE ItensPedido (
+    ItemID SERIAL PRIMARY KEY,
+    PedidoID INT REFERENCES Pedidos(PedidoID),
+    ProdutoID INT REFERENCES Produtos(ProdutoID),
+    Quantidade INT NOT NULL,
+    PrecoUnitario DECIMAL(10, 2) NOT NULL
+);
+
+-- Lista 01 - Pedro Ramon
+
+-- Questões sobre Funções (Functions)
+
+-- 1:
+CREATE OR REPLACE FUNCTION CalcularIdade(DataNascimento DATE)
+RETURNS INT AS $$
+BEGIN
+    RETURN EXTRACT(YEAR FROM AGE(DataNascimento));
+END;
+$$ LANGUAGE plpgsql;
+
+-- 2:
+CREATE OR REPLACE FUNCTION VerificarEstoque(ProdutoID INT)
+RETURNS INT AS $$
+DECLARE
+    quantidadeEstoque INT;
+BEGIN
+    SELECT Estoque INTO quantidadeEstoque
+    FROM Produtos
+    WHERE ProdutoID = ProdutoID;
+    RETURN quantidadeEstoque;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 3:
+CREATE OR REPLACE FUNCTION CalcularDesconto(ProdutoID INT, percentualDesconto NUMERIC)
+RETURNS NUMERIC AS $$
+DECLARE
+    precoFinal NUMERIC;
+    precoOriginal NUMERIC;
+BEGIN
+    SELECT Preco INTO precoOriginal
+    FROM Produtos
+    WHERE ProdutoID = ProdutoID;
+    precoFinal = precoOriginal - (precoOriginal * (percentualDesconto / 100));
+    RETURN precoFinal;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 4:
+CREATE OR REPLACE FUNCTION ObterNomeCliente(ClienteID INT)
+RETURNS VARCHAR AS $$
+DECLARE
+    nomeCliente VARCHAR(100);
+BEGIN
+    SELECT Nome INTO nomeCliente
+    FROM Clientes
+    WHERE ClienteID = ClienteID;
+    RETURN nomeCliente;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 5:
+CREATE OR REPLACE FUNCTION CalcularFrete(valorTotal NUMERIC, cidadeCliente VARCHAR)
+RETURNS NUMERIC AS $$
+DECLARE
+    frete NUMERIC;
+BEGIN
+    IF cidadeCliente = 'São Paulo' THEN
+        frete = valorTotal * 0.05;
+    ELSE
+        frete = valorTotal * 0.10;
+    END IF;
+    RETURN frete;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 6:
+CREATE OR REPLACE FUNCTION CalcularPontos(ClienteID INT)
+RETURNS INT AS $$
+DECLARE
+    totalPontos INT DEFAULT 0;
+    valorTotal NUMERIC;
+BEGIN
+    FOR valorTotal IN 
+        SELECT ValorTotal FROM Pedidos WHERE ClienteID = ClienteID
+    LOOP
+        IF valorTotal > 100 THEN
+            totalPontos := totalPontos + 10;
+        ELSE
+            totalPontos := totalPontos + 5;
+        END IF;
+    END LOOP;
+    RETURN totalPontos;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Questões sobre Procedimentos Armazenados (Stored Procedures)
+
+-- 1:
+CREATE OR REPLACE PROCEDURE AtualizarEstoqueEmMassa(produtoIDs INT[], quantidadeAdicionar INT)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    produtoID INT;
+BEGIN
+    FOREACH produtoID IN ARRAY produtoIDs
+    LOOP
+        UPDATE Produtos
+        SET Estoque = Estoque + quantidadeAdicionar
+        WHERE ProdutoID = produtoID;
+    END LOOP;
+END;
+$$;
+
+-- 2:
+CREATE OR REPLACE PROCEDURE InserirCliente(nome VARCHAR, email VARCHAR, dataNascimento DATE, cidade VARCHAR)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    INSERT INTO Clientes (Nome, Email, DataNascimento, Cidade)
+    VALUES (nome, email, dataNascimento, cidade);
+END;
+$$;
+
+-- 3:
+CREATE OR REPLACE PROCEDURE RealizarPedido(clienteID INT, dataPedido DATE, itens JSONB)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    pedidoID INT;
+    item JSONB;
+BEGIN
+    INSERT INTO Pedidos (ClienteID, DataPedido, ValorTotal) 
+    VALUES (clienteID, dataPedido, 0)
+    RETURNING PedidoID INTO pedidoID;
+
+    FOR item IN SELECT * FROM jsonb_array_elements(itens)
+    LOOP
+        INSERT INTO ItensPedido (PedidoID, ProdutoID, Quantidade, PrecoUnitario)
+        VALUES (pedidoID, (item->>'ProdutoID')::INT, (item->>'Quantidade')::INT, (item->>'PrecoUnitario')::NUMERIC);
+        
+        UPDATE Pedidos 
+        SET ValorTotal = ValorTotal + (item->>'Quantidade')::INT * (item->>'PrecoUnitario')::NUMERIC
+        WHERE PedidoID = pedidoID;
+    END LOOP;
+END;
+$$;
+
+-- 4:
+CREATE OR REPLACE PROCEDURE ExcluirCliente(clienteID INT)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    DELETE FROM ItensPedido WHERE PedidoID IN (SELECT PedidoID FROM Pedidos WHERE ClienteID = clienteID);
+    DELETE FROM Pedidos WHERE ClienteID = clienteID;
+    DELETE FROM Clientes WHERE ClienteID = clienteID;
+END;
+$$;
+
+-- 5:
+CREATE OR REPLACE PROCEDURE AtualizarPrecoProduto(produtoID INT, novoPreco NUMERIC)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    UPDATE Produtos
+    SET Preco = novoPreco
+    WHERE ProdutoID = produtoID;
+END;
+$$;
+
+-- 6:
+CREATE OR REPLACE PROCEDURE InserirClienteComVerificacao(nome VARCHAR, email VARCHAR, dataNascimento DATE, cidade VARCHAR)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    emailExiste INT;
+BEGIN
+    SELECT COUNT(*) INTO emailExiste FROM Clientes WHERE Email = email;
+    IF emailExiste > 0 THEN
+        RAISE EXCEPTION 'Erro: O email já existe na base de dados.';
+    ELSE
+        INSERT INTO Clientes (Nome, Email, DataNascimento, Cidade)
+        VALUES (nome, email, dataNascimento, cidade);
+    END IF;
+END;
+$$;
